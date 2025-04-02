@@ -1,0 +1,197 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import undetected_chromedriver as uc
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium_stealth import stealth
+import time
+import csv
+import random
+from datetime import datetime
+from fake_useragent import UserAgent
+
+# Tạo tên file dựa trên thời gian hiện tại
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+csv_filename = f"batdongsan_data_{current_time}.csv"
+
+# Tự động cài đặt ChromeDriver phù hợp
+service = Service(ChromeDriverManager().install())
+
+# Tạo User-Agent ngẫu nhiên
+ua = UserAgent()
+
+# Cấu hình trình duyệt với undetected_chromedriver
+options = uc.ChromeOptions()
+options.add_argument("--disable-blink-features=AutomationControlled")
+options.add_argument("--window-size=1920,1080")
+options.add_argument("--disable-popup-blocking")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+options.add_argument("--disable-gpu")
+options.add_argument("--disable-extensions")
+options.add_argument("--disable-notifications")
+options.add_argument(f"user-agent={ua.random}")
+
+
+# Sử dụng undetected_chromedriver với ChromeDriver đã cập nhật
+browser = uc.Chrome(
+    service=service,
+    options=options,
+    use_subprocess=True,  # Thêm tùy chọn này để tránh lỗi
+    version_main=134  # Cập nhật version Chrome phù hợp
+)
+
+# Cài đặt stealth mode
+stealth(browser,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+        hide_webdriver=True)
+
+# Hàm kiểm tra Cloudflare
+def check_cloudflare(driver):
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.title_contains("Just a moment")
+        )
+        print("⚠️ Phát hiện Cloudflare challenge...")
+        return True
+    except:
+        return False
+
+# Hàm xử lý Cloudflare
+def handle_cloudflare(driver):
+    print("🛡️ Đang xử lý Cloudflare...")
+    time.sleep(10)  # Tăng thời gian chờ cho Cloudflare
+    try:
+        # Thử click vào nếu có button verify
+        driver.find_element(By.XPATH, "//input[@type='checkbox']").click()
+        time.sleep(5)
+    except:
+        pass
+    try:
+        driver.find_element(By.XPATH, "//input[@value='Verify']").click()
+        time.sleep(5)
+    except:
+        pass
+
+# Mở file CSV với tên tự động
+with open(csv_filename, "w", newline="", encoding="utf-8-sig") as csvfile:
+    writer = csv.writer(csvfile)
+    # Đảm bảo đủ các cột như ban đầu
+    writer.writerow(["Tên dự án", "Giá", "Diện tích", "Phòng ngủ", "Phòng vệ sinh", "Vị trí", "Địa chỉ chi tiết", "id"])
+
+    # Duyệt qua từng trang
+    for page in range(1, 2):  # Giảm số trang để test
+        url = f"https://batdongsan.com.vn/nha-dat-ban/p{page}"
+        print(f"📄 Đang xử lý trang: {url}")
+        
+        try:
+            browser.get(url)
+            
+            # Kiểm tra Cloudflare
+            if check_cloudflare(browser):
+                handle_cloudflare(browser)
+                if check_cloudflare(browser):  # Kiểm tra lại sau khi xử lý
+                    print("❌ Không thể vượt qua Cloudflare. Bỏ qua trang này.")
+                    continue
+            
+            # Chờ tải trang
+            WebDriverWait(browser, 20).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "re__card-info-content"))
+            )
+            
+            # Cuộn trang để tải dữ liệu
+            for _ in range(3):
+                browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(2, 4))
+            
+            # Tìm danh sách bất động sản
+            elements = browser.find_elements(By.CLASS_NAME, "re__card-info-content")
+            if not elements:
+                print(f"⚠️ Không tìm thấy dữ liệu trên trang {page}.")
+                continue
+
+            for ele in elements:
+                try:
+                    # Lấy thông tin cơ bản
+                    name = ele.find_element(By.CLASS_NAME, "pr-title").text
+                    price = ele.find_element(By.CLASS_NAME, "re__card-config-price").text
+                    area = ele.find_element(By.CLASS_NAME, "re__card-config-area").text
+                    
+                    bedrooms = ele.find_element(By.CSS_SELECTOR, "span[class*='re__card-config-bedroom']").get_attribute("aria-label").split()[0] if ele.find_elements(By.CSS_SELECTOR, "span[class*='re__card-config-bedroom']") else "N/A"
+                    bathrooms = ele.find_element(By.CSS_SELECTOR, "span[class*='re__card-config-toilet']").get_attribute("aria-label").split()[0] if ele.find_elements(By.CSS_SELECTOR, "span[class*='re__card-config-toilet']") else "N/A"
+                    
+                    location = ele.find_element(By.CSS_SELECTOR, "div[class*='re__card-location'] > span:last-child").text if ele.find_elements(By.CSS_SELECTOR, "div[class*='re__card-location'] > span:last-child") else "N/A"
+                    detail_link = ele.find_element(By.XPATH, "./ancestor::a").get_attribute("href")
+
+                
+
+                    # Mở trang chi tiết trong tab mới
+                    browser.execute_script(f"window.open('{detail_link}', '_blank');")
+                    browser.switch_to.window(browser.window_handles[1])
+                    
+                    # Chờ và xử lý Cloudflare trên tab mới nếu có
+                    time.sleep(random.uniform(3, 6))
+                    if check_cloudflare(browser):
+                        handle_cloudflare(browser)
+                    
+                    # Lấy thông tin chi tiết
+                    try:
+                        WebDriverWait(browser, 15).until(
+                            EC.presence_of_element_located((By.CLASS_NAME, "re__pr-short-description"))
+                        )
+                        description = browser.find_element(By.XPATH, '//span[@class="re__pr-short-description js__pr-address"]').text
+                    except:
+                        description = "N/A"
+
+                    # Lấy prid từ trang chi tiết
+                    try:
+                        prid_element = browser.find_element(By.XPATH, "//div[@id='product-detail-web']")
+                        prid = prid_element.get_attribute("prid") if prid_element else "N/A"
+                    except:
+                        prid = "N/A"
+
+                  
+                    # Đóng tab chi tiết và quay lại trang danh sách
+                    browser.close()
+                    browser.switch_to.window(browser.window_handles[0])
+                    
+                    # Lưu vào CSV với đầy đủ thông tin
+                    writer.writerow([
+                        name, 
+                        price, 
+                        area, 
+                        bedrooms, 
+                        bathrooms, 
+                        location, 
+                        description,
+                        prid,
+                      
+                    ])
+                    
+                    print(f"Trang {page}: {name} | {price} | {area} | {bedrooms} | {bathrooms} | {location} | {description} | {prid}")
+                    # Ngủ ngẫu nhiên giữa các request
+                    time.sleep(random.uniform(2, 5))
+                    
+                except Exception as e:
+                    print(f"⚠️ Lỗi khi thu thập thông tin: {str(e)}")
+                    # Đảm bảo đóng tab nếu có lỗi
+                    if len(browser.window_handles) > 1:
+                        browser.close()
+                        browser.switch_to.window(browser.window_handles[0])
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ Lỗi khi xử lý trang {page}: {str(e)}")
+            continue
+
+# Đóng trình duyệt
+browser.quit()
+print(f"✅ Dữ liệu đã được lưu vào file: {csv_filename}")
